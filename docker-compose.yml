@@ -1,0 +1,50 @@
+
+services:
+  monitor:
+    container_name: orange_pi_monitor
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    mem_limit: 256m
+    privileged: true
+    devices:
+      - /dev/nvme0:/dev/nvme0
+    volumes:
+      - ./backend:/app/backend:ro
+    networks:
+      - shared_network
+
+  api:
+    container_name: fastapi_monitor
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - shared_network
+
+  frontend:
+      build:
+        context: ./frontend
+        dockerfile: Dockerfile
+      container_name: orange_monitor_frontend
+      ports:
+        - "3000:3000"  # vanjski:unutarnji port
+      restart: always
+      depends_on:
+        - api
+      environment:
+        - NODE_ENV=production
+      networks:
+        - shared_network
+
+networks:
+  shared_network:
+    external: true
