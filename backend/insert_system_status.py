@@ -81,4 +81,4 @@ if __name__ == "__main__":
             save_to_db(status)
         except Exception as err:
             print(f"❌ Greška prilikom dohvaćanja statusa: {err}")
-        time.sleep(1)
+        time.sleep(60)

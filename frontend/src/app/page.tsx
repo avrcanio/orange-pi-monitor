@@ -9,138 +9,26 @@ import {
   Tooltip,
   CartesianGrid,
   ResponsiveContainer,
-  LineChart,
-  Line,
-  Legend,
-  AreaChart,
-  Area,
-  PieChart,
-  Pie,
-  Cell,
 } from 'recharts';
 
-function GaugeChart({
-  label,
-  value,
-  max = 100,
-}: {
-  label: string;
-  value: number;
-  max?: number;
-}) {
-  const percentage = Math.min(value / max, 1);
-
-  const data = [
-    { name: 'Used', value: percentage },
-    { name: 'Remaining', value: 1 - percentage },
-  ];
-
-  const COLORS = ['#ff7300', '#f0f0f0'];
-
-  return (
-    <div style={{ width: 200, height: 200, textAlign: 'center' }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={data}
-            startAngle={180}
-            endAngle={0}
-            innerRadius={60}
-            outerRadius={80}
-            dataKey="value"
-          >
-            {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={COLORS[index]} />
-            ))}
-          </Pie>
-        </PieChart>
-      </ResponsiveContainer>
-      <div style={{ marginTop: '-60px', fontSize: '1.2rem' }}>
-        {label}: {Math.round(value)} °C
-      </div>
-    </div>
-  );
-}
-
-type Status = {
-  cpuData: { name: string; Opterećenje: number }[];
-  cpu_percent: string;
-  load_average: string;
-  cpu_temp: number;
-  nvme_temp: number;
-  ram_used_gb: number;
-  ram_free_gb: number;
-  swap_used_gb: number;
-  swap_free_gb: number;
-  disk_used_gb: number;
-  disk_free_gb: number;
-  network_json: string;
-};
-
-type HistoryPoint = {
-  time: string;
-  cpu_temp: number;
-  nvme_temp: number;
-  load_1: number;
-  load_5: number;
-  load_15: number;
-  ram_used: number;
-  ram_free: number;
-  swap_used: number;
-  swap_free: number;
-  disk_used: number;
-  disk_free: number;
-  eth_sent: number;
-  eth_recv: number;
-};
+import { Status, HistoryPoint } from '@/app/utils/types';
+import { fetchLatestStatus } from '@/app/utils/fetchStatus';
+import { formatUsage, calculateLoadPercentage , calculateNvmeTbwPercentage } from '@/app/utils/helper';
+import GaugeChart from '@/app/components/GaugeChart';
+import CpuTempChart from '@/app/components/CpuTempChart'; // ✅ novo
 
 export default function Home() {
   const [status, setStatus] = useState<Status | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
+  const maxWrittenMB = 600_000_000;
 
   useEffect(() => {
-    const fetchData = () => {
-      fetch('http://192.168.31.68:8001/status/latest')
-        .then((res) => res.json())
-        .then((data: Status) => {
-          const cpu_percent_parsed = data.cpu_percent
-            .replace(/[{}]/g, '')
-            .split(',')
-            .map((v) => parseFloat(v));
-
-          const parsedLoad = data.load_average
-            .replace(/[()]/g, '')
-            .split(',')
-            .map((v) => parseFloat(v));
-
-          const cpuData = cpu_percent_parsed.map((value, index) => ({
-            name: `Jezgra ${index + 1}`,
-            Opterećenje: value,
-          }));
-
-          const net = JSON.parse(data.network_json);
-
-          const newPoint: HistoryPoint = {
-            time: new Date().toLocaleTimeString(),
-            cpu_temp: data.cpu_temp,
-            nvme_temp: data.nvme_temp,
-            load_1: parsedLoad[0],
-            load_5: parsedLoad[1],
-            load_15: parsedLoad[2],
-            ram_used: data.ram_used_gb,
-            ram_free: data.ram_free_gb,
-            swap_used: data.swap_used_gb,
-            swap_free: data.swap_free_gb,
-            disk_used: data.disk_used_gb,
-            disk_free: data.disk_free_gb,
-            eth_sent: net.eth0.bytes_sent,
-            eth_recv: net.eth0.bytes_recv,
-          };
-
-          setStatus({ ...data, cpuData });
-          setHistory((prev) => [...prev.slice(-29), newPoint]);
-        })
-        .catch((err) => console.error('Greška prilikom dohvata:', err));
+    const fetchData = async () => {
+      const result = await fetchLatestStatus();
+      if (!result) return;
+      const { parsedStatus, newPoint } = result;
+      setStatus(parsedStatus);
+      setHistory((prev) => [...prev.slice(-29), newPoint]);
     };
 
     fetchData();
@@ -152,7 +40,7 @@ export default function Home() {
 
   return (
     <main style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
-      <h1>📊 Status Orange Pi sustava</h1>
+      <h1>📊 Orange Pi core usage</h1>
 
       <ResponsiveContainer width="100%" height={250}>
         <BarChart data={status.cpuData}>
@@ -164,64 +52,83 @@ export default function Home() {
         </BarChart>
       </ResponsiveContainer>
 
-      <h2>🌡️ Temperature (Gauge)</h2>
-      <div style={{ display: 'flex', gap: '2rem', marginBottom: '2rem' }}>
-        <GaugeChart value={status.cpu_temp} label="CPU temperatura" />
-        <GaugeChart value={status.nvme_temp} label="NVMe temperatura" />
+      <h2>📈 Load Average</h2>
+      <div style={{ display: 'flex', gap: '2rem', justifyContent: 'center', marginBottom: '2rem' }}>
+        <GaugeChart value={status.load_1} max={10} label="Load avg (1m)" unit="" />
+        <GaugeChart value={status.load_5} max={10} label="Load avg (5m)" unit="" />
+        <GaugeChart value={status.load_15} max={10} label="Load avg (15m)" unit="" />
       </div>
 
-      <h2>🌡️ Temperature, RAM, Load avg</h2>
-      <ResponsiveContainer width="100%" height={300}>
-        <LineChart data={history}>
-          <XAxis dataKey="time" />
-          <YAxis />
-          <Tooltip />
-          <Legend />
-          <Line type="monotone" dataKey="cpu_temp" stroke="#ff7300" name="CPU temp" />
-          <Line type="monotone" dataKey="nvme_temp" stroke="#0070f3" name="NVMe temp" />
-          <Line type="monotone" dataKey="load_1" stroke="#00c49f" name="Load 1m" />
-          <Line type="monotone" dataKey="load_5" stroke="#82ca9d" name="Load 5m" />
-          <Line type="monotone" dataKey="load_15" stroke="#8884d8" name="Load 15m" />
-        </LineChart>
-      </ResponsiveContainer>
+      <h2>🌡️ Temperature</h2>
+      <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
+        <GaugeChart value={status.cpu_temp} label="CPU temp" unit="°C" />
+      
+      </div>
 
-      <h2>💾 RAM i SWAP</h2>
-      <ResponsiveContainer width="100%" height={250}>
-        <AreaChart data={history}>
-          <XAxis dataKey="time" />
-          <YAxis />
-          <Tooltip />
-          <Legend />
-          <Area type="monotone" dataKey="ram_used" stackId="1" stroke="#ff7300" fill="#ff7300" name="RAM used" />
-          <Area type="monotone" dataKey="ram_free" stackId="1" stroke="#00c49f" fill="#00c49f" name="RAM free" />
-          <Area type="monotone" dataKey="swap_used" stackId="2" stroke="#8884d8" fill="#8884d8" name="SWAP used" />
-          <Area type="monotone" dataKey="swap_free" stackId="2" stroke="#82ca9d" fill="#82ca9d" name="SWAP free" />
-        </AreaChart>
-      </ResponsiveContainer>
+      <h2>💾 RAM, SWAP</h2>
+      <div style={{ display: 'flex', gap: '2rem', justifyContent: 'center', marginBottom: '2rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 200 }}>
+          <GaugeChart value={status.ram_used_gb} max={status.ram_total_gb} label="RAM used" unit="GB" />
+          <div style={{ marginTop: '-0.5rem', fontSize: '0.9rem', textAlign: 'center' }}>
+            {formatUsage(status.ram_used_gb, status.ram_total_gb)}
+          </div>
+        </div>
 
-      <h2>🗄️ Disk</h2>
-      <ResponsiveContainer width="100%" height={250}>
-        <AreaChart data={history}>
-          <XAxis dataKey="time" />
-          <YAxis />
-          <Tooltip />
-          <Legend />
-          <Area type="monotone" dataKey="disk_used" stackId="1" stroke="#8884d8" fill="#8884d8" name="Disk used" />
-          <Area type="monotone" dataKey="disk_free" stackId="1" stroke="#00c49f" fill="#00c49f" name="Disk free" />
-        </AreaChart>
-      </ResponsiveContainer>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 200 }}>
+          <GaugeChart value={status.swap_used_gb} max={status.swap_total_gb} label="SWAP used" unit="GB" />
+          <div style={{ marginTop: '-0.5rem', fontSize: '0.9rem', textAlign: 'center' }}>
+            {formatUsage(status.swap_used_gb, status.swap_total_gb)}
+          </div>
+        </div>
+      </div>
 
-      <h2>🌐 Mreža (eth0)</h2>
-      <ResponsiveContainer width="100%" height={250}>
-        <LineChart data={history}>
-          <XAxis dataKey="time" />
-          <YAxis />
-          <Tooltip />
-          <Legend />
-          <Line type="monotone" dataKey="eth_sent" stroke="#ff7300" name="Bytes sent" />
-          <Line type="monotone" dataKey="eth_recv" stroke="#0070f3" name="Bytes recv" />
-        </LineChart>
-      </ResponsiveContainer>
+      <h2>🌡️ NVMe + Disk</h2>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2rem', justifyContent: 'center', marginBottom: '2rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 200 }}>
+          <GaugeChart value={status.nvme_temp} label="NVMe temp" unit="°C" />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 200 }}>
+          <GaugeChart
+            value={status.disk_used_gb}
+            max={status.disk_total_gb}
+            label="Disk used"
+            unit="GB"
+          />
+          <div style={{ marginTop: '-0.5rem', fontSize: '0.9rem', textAlign: 'center' }}>
+            {formatUsage(status.disk_used_gb, status.disk_total_gb)}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '4rem', marginBottom: '1rem' }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>NVMe Read</div>
+              <div style={{ fontSize: '1.1rem' }}>
+                {Math.round(status.nvme_read * 0.512)} GB
+              </div>
+            </div>
+
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>NVMe Written</div>
+              <div style={{ fontSize: '1.1rem' }}>
+                {Math.round(status.nvme_written * 0.512)} GB
+              </div>
+            </div>
+          </div>
+
+          <GaugeChart
+            value={calculateNvmeTbwPercentage(status.nvme_written, maxWrittenMB)}
+            max={100}
+            label="NVMe Written usage"
+            unit="%"
+            title={`Zapisano: ${Math.round(status.nvme_written * 0.512)} GB / ${Math.round(maxWrittenMB / 1024)} GB ukupno`}
+          />
+        </div>
+          <div style={{ flex: 1, minWidth: '300px' }}>
+          <CpuTempChart /> {/* ✅ dodano */}
+        </div>
+      </div>
     </main>
   );
 }
